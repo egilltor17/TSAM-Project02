@@ -1,160 +1,117 @@
-//
-// Simple client for TSAM-409 Project 2 b
-//
-// Compile: g++ -Wall -std=c++11 scanner.cpp -o scanner
-//
-// Command line: ./client <ip host> <ip port low> <ip port high>
-//
-// Author: Egill Torfason (egilltor17@ru.is)
-//
-#include <stdio.h>
-#include <errno.h>
-#include <csignal>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <string.h>
-#include <algorithm>
-#include <map>
-#include <vector>
 
+#include <stdio.h> 
+#include <sys/socket.h> 
+#include <arpa/inet.h> 
+#include <unistd.h> 
+#include <string.h> 
 #include <iostream>
-#include <sstream>
-#include <thread>
-#include <map>
+#include <netinet/udp.h>
+#include <netinet/ip.h>
 
-#define BUFFER_SIZE 1024    // max request length
+#define BACKLOG  5
+using namespace std;
+int main(int argc, char const *argv[]) 
+{
+    int servSock; 
+    int clieSock; 
+    int lowPort = atoi(argv[2]);
+    int highPort = atoi(argv[3]);
+    char buffer[1024] = {0}; 
+    struct sockaddr_in serv_addr;
+    struct sockaddr_in clie_addr;
 
-// Debug macro that prints "[file_name](function::line): " before the supled message
-#define PRINT_ERROR(message) {\
-    std::string _file = __FILE__; \
-    printf("[%s](%s::%d): %s\n", _file.substr(_file.rfind('/') + 1, _file.npos).c_str(), __FUNCTION__, __LINE__, message); \
-}
-// Macro that is used to copy 0 to BUFFER_SIZE chars when takin user input
-#define COPY_SIZE(buf) ((sizeof(buf) < BUFFER_SIZE ? sizeof(buf) : BUFFER_SIZE) - 1)
-
-int sock = 0;
-
-// A signal handle that safely disconnects the client before terminating
-void signalHandler(const int signum) {
-    printf(" Signal (%d) received, closing connection.\n", signum);
-    if(sock) { close(sock); }
-    exit(signum);  
-}
-
-int main(int argc, char *argv[]) {
-    struct sockaddr_in server; 
-    char buffer[BUFFER_SIZE];
-    std::string buffer2;
-    std::string host;
-    sock = 0;
-    int ip_low = 0;
-    int ip_high = 0;
-
-    // register signal SIGINT and signal handler  
-    signal(SIGINT, signalHandler); 
-
-    // Require three arguments <host>, <ip port low> and <ip port high>
-    if(argc != 4) {
-        printf("Usage: client <host> <ip port low> <ip port high>\n");
-        exit(0);
+    //create a socket
+    // if ((servSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
+    if ((servSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) 
+    { 
+        cout << "\n error socket creation unsuccessful" << endl; 
+        return -1; 
+    } 
+    if ((clieSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
+    { 
+        cout << "\n error socket creation unsuccessful" << endl; 
+        return -1; 
+    } 
+    if(argc < 3)
+    {
+        cout << "\n Not enough arguements" << endl; 
+        return -1; 
     }
-
-    // <ip port low> <ip port high> must be integers
-    if(!((ip_low = atoi(argv[2])) || argv[2][0] == 0) || !(ip_high = atoi(argv[3]))) {
-        printf("ip port high and low must be integers");
-        return -1;
-    }
-    // <ip port low> must be lower or equal to <ip port high>
-    if(ip_low > ip_high) {
-        printf("<ip port low> must be lower or equal to <ip port high>");
-        return -1;
-    }
-
-    // <ip port low> and <ip port high> must be in range of valid ports
-    if(ip_low <= 0 || ip_low > 65535) {
-        printf("<ip port low> must be in range [0 - 65534]\n");
-        return -1;
-    }
-
-    if(ip_high <= 0 || ip_high > 65535) {
-        printf("<ip port high> must be in range [0 - 65534]\n");
-        return -1;
-    }
-
-    // Parse host name to IP address if possible
-    // http://www.cplusplus.com/forum/articles/9742/
-    hostent *record = gethostbyname(argv[1]);
-    host = record ? inet_ntoa(*(in_addr *)record->h_addr) : argv[1];
-
-    // Scanning loop
-    for(int i = ip_low; i <= ip_high; i++) {
-
-        // // Open a socket TCP
-        // if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) { 
-        //     PRINT_ERROR("Socket creation error");
-        //     return -1;
-        // }
-        
-        // Open a socket UDP
-        if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
-            PRINT_ERROR("Socket creation error");
-            return -1;
+    //initialize port in serv_addr object
+    serv_addr.sin_family = AF_INET; 
+    // clie_addr.sin_family = AF_INET;
+    // inet_pton(AF_INET, "127.0.0.1", &clie_addr.sin_addr);
+    // clie_addr.sin_port = htons(34810);
+    // if(bind(clieSock, (struct sockaddr*)&clie_addr, sizeof(clie_addr)) < 0){
+    //     cout << "bind error" << endl;
+    //     return -1;
+    // }
+    // cout << htons(clie_addr.sin_port) << endl;
+    //  convert address to binary 
+    if(inet_pton(AF_INET, argv[1], &serv_addr.sin_addr) <= 0)  
+    { 
+        string address = argv[1];
+        if(address == "skel.ru.is"){
+            inet_pton(AF_INET, "130.208.243.61", &serv_addr.sin_addr);
         }
-        
-        // // Open a socket RAW (might need sudo)
-        // if((sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
-        //     PRINT_ERROR("Socket creation error");
-        //     return -1;
-        // }
-
-        // Set type of connection
-        server.sin_family = AF_INET;
-        // Set port
-        server.sin_port = htons(i); 
- 
-        // Convert IPv4 and IPv6 addresses from text to binary form 
-        if(inet_pton(AF_INET, host.c_str(), &server.sin_addr) <= 0) { 
-            PRINT_ERROR("Invalid address/ Address not supported");
-            return -1;
-        } 
-    
-        // Connext to the socket
-        if(connect(sock, (sockaddr *)&server, sizeof(server)) < 0) { 
-            printf("Port: %d - Connection failed\n", i);
-            // PRINT_ERROR("Connection Failed");
-            // return -1;
-        } else {
-            printf("Port: %d - Connection succsessfull\n", i);
+        else{
+            cout << "\nAddress was not accepted" << endl; 
+            return -1; 
         }
-        
-        // Main loop
-        while(!true) {
-            // Prefixes the commandline with the host:$
-            printf("\033[0;32m%s:\033[0m$ ", argv[1]);
-            
-            // Get and send the user input
-            memset(buffer, 0, sizeof(buffer));
-            std::getline(std::cin, buffer2);
-            strncpy(buffer, buffer2.c_str(), COPY_SIZE(buffer2));
-            send(sock, buffer, sizeof(buffer), 0);
-            
-            // Receive and dispaly the server responce
-            memset(buffer, 0, sizeof(buffer));
-            if(recv(sock, buffer, sizeof(buffer), 0) <= 0) {
-                printf("No reply\n");
-            } else {
-                printf("%s", buffer);
-            }
+    } 
+    cout << "Open ports: " << endl;
+    for(int i = lowPort; i <= highPort; i++){
+        serv_addr.sin_port = htons(i); 
+        socklen_t addr_len = sizeof(serv_addr);
+        // iphdr ip;
+        // ip.tos = ;
+        // ip.tot_len;
+        // ip.id;
+        // ip.frag_off;
+        // ip.ttl;
+        // ip.protocol;
+        // ip.check;
+        // ip.saddr;
+        // ip.daddr;
+        // if (getsockname(rawSock, (struct sockaddr *)&serv_addr, &addr_len) == -1)
+        //     perror("getsockname");
+        // else
+        //     printf("port number %d\n", serv_addr.sin_port);
+        struct udpwdesc{
+            udphdr udp;
+            char* description;
+        };
+        udpwdesc udphd;
+        //works with port 64702 and check const 0xEDB8
+        udphd.udp.source = htons(45117);
+        udphd.udp.dest = htons(i);
+        udphd.udp.len = htons(8);		/* udp length */
+        udphd.udp.check = htons(0x7065);		/* udp checksum */
+        udphd.description = "scanning for victims";
+        if (i == 4015){
+            // udphd.udp.dest = htons(4055);
+            serv_addr.sin_port = htons(i);
         }
-
-        close(sock);
+        // connect to address and port
+        // cout << i << " ";
+        // fflush(stdout);
+        timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 250;
+        memset (buffer, 0, sizeof (buffer));
+        sendto(servSock , &udphd , sizeof(udphd) + 20, 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
+        //set timeout of recvfrom
+        setsockopt(servSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        // cout << htons(serv_addr.sin_port) << endl;        
+        if(int read = recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ){
+            string message = buffer + 28;
+            cout << i << endl;
+            cout << message << endl;
+        }
+        else
+        {
+            // cout << read << endl;
+        }
     }
-    return 0;
-}
+    return 0; 
+} 
