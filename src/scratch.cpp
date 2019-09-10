@@ -208,3 +208,37 @@ int main() {
     return 0;
 } 
 */
+
+
+unsigned short csum(unsigned short *ptr, int nbytes) {
+	register long sum;
+	unsigned short oddbyte;
+	register short answer;
+
+	sum=0;
+	while(nbytes > 1) {
+		sum += *ptr++;
+		nbytes-=2;
+	}
+	if(nbytes == 1) {
+		oddbyte=0;
+		*((u_char*) & oddbyte) = *(u_char*)ptr;
+		sum += oddbyte;
+	}
+
+	sum = (sum >> 16)+(sum & 0xffff);
+	sum = sum + (sum >> 16);
+	answer=(short)~sum;
+	
+	return(answer);
+}
+
+
+uint16_t csum(void *buf, int cb) {
+    uint16_t *ptr = (uint16_t *)buf;
+    //initialize the sum with the last byte in case of odd size, otherwise to zero
+    int32_t sum = (cb&1) ? ((uint8_t)buf)[cb-1] : 0;
+    cb/=2;
+    while(cb--) sum += *ptr++;
+    return (uint16_t)~((sum>>16)+(sum & 0xffff));
+}

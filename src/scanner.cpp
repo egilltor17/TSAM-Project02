@@ -110,7 +110,7 @@ int main(int argc, char const *argv[]) {
     // Parse host name to IP address if possible
     hostent *record = gethostbyname(argv[1]);
     address = record ? inet_ntoa(*(in_addr *)record->h_addr) : argv[1];
-    
+    std::cout << address << endl;
     //  convert address to binary 
     if(inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0) {   
         std::cout << "\nAddress was not accepted" << endl; 
@@ -156,40 +156,36 @@ int main(int argc, char const *argv[]) {
         timeval tv;
         tv.tv_sec = 0;
         tv.tv_usec = 250;
-        memset (buffer, 0, sizeof (buffer));
-        sendto(servSock , &udphd , sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
+        memset(buffer, 0, sizeof (buffer));
+        sendto(servSock, &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
         //set timeout of recvfrom
         setsockopt(servSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         // cout << htons(serv_addr.sin_port) << endl;        
-        if(recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ) {
+        if(recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0) {
             // string message = buffer + 28;    // Raw socket
             string message = buffer;
             cout << i << endl;
             cout << message << endl;
             std::cmatch cm;
             // Port
-            if(std::regex_match(message.c_str(), cm, std::regex("This is the port:(\\d+)"))) {
+            if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
                 std::cout << "Port: " << cm[1] << endl;
             }
             // Evil
-            if(std::regex_match(message.c_str(), std::regex("I only.*"))) {
+            if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
                 std::cout << "Evil" << endl;
             }
             // Checksum
-            if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
+            if(std::regex_match(message.c_str(), cm, std::regex("^Please send.*of (\\d+)"))) {
                 std::cout << "Checksum: " << cm[1] << endl;
             }
             // Oracle
-            // if(std::regex_match(message.c_str(), std::regex(".*oracle.*"))) {
-            if(std::regex_match(message.c_str(), std::regex("I am the oracle.*\\n"))) {
+            if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
                 std::cout << "Oracle" << endl;
             }
-            // I only speak with fellow evil villains. (https://en.wikipedia.org/wiki/Evil_bit)
-            // Please send me a message with a valid udp checksum with value of 61453
-            // I am the oracle, reveal to me the hidden ports, and I shall show you the way.
-        } else {
-            // cout << read << endl;
-        }
+            printf("from Port: %d\n", htons(serv_addr.sin_port));
+            printf("from addr: %s\n", inet_ntoa(serv_addr.sin_addr));
+        } 
     }
     close(servSock);
     return 0; 
