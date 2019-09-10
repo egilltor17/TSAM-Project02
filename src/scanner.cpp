@@ -49,8 +49,12 @@ int main(int argc, char const *argv[]) {
     char buffer[1024] = {0}; 
     struct sockaddr_in serv_addr;
     struct sockaddr_in clie_addr;
+    std::string address = "";
 
-    //create a socket
+    // register signal SIGINT and signal handler  
+    signal(SIGINT, signalHandler); 
+    
+    //create a sockets
     // if ((servSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
     if((servSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
         std::cout << "\n error raw socket creation unsuccessful" << endl; 
@@ -61,14 +65,13 @@ int main(int argc, char const *argv[]) {
         return -1; 
     } 
 
-    // register signal SIGINT and signal handler  
-    signal(SIGINT, signalHandler); 
-
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
         printf("Usage: client <host> <ip port low> <ip port high>\n");
         exit(0);
     }
+
+    address = argv[1];
 
     // <ip port low> <ip port high> must be integers
     if(!((lowPort = atoi(argv[2])) || argv[2][0] == 0) || !(highPort = atoi(argv[3]))) {
@@ -103,7 +106,6 @@ int main(int argc, char const *argv[]) {
     // }
     // std::cout << htons(clie_addr.sin_port) << endl;
     
-    std::string address = argv[1];
     // Parse host name to IP address if possible
     hostent *record = gethostbyname(argv[1]);
     address = record ? inet_ntoa(*(in_addr *)record->h_addr) : argv[1];
@@ -157,7 +159,7 @@ int main(int argc, char const *argv[]) {
         //set timeout of recvfrom
         setsockopt(servSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         // std::cout << htons(serv_addr.sin_port) << endl;        
-        if(int read = recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ){
+        if(int read = recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ) {
             std::string message = buffer + 28;
             std::cout << i << endl;
             std::cout << message << endl;
