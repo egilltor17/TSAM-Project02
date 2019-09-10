@@ -18,7 +18,7 @@ int main(int argc, char const *argv[])
     int highPort = atoi(argv[3]);
     char buffer[1024] = {0}; 
     struct sockaddr_in serv_addr;
-    struct sockaddr_in clie_addr;
+    // struct sockaddr_in clie_addr;
 
     //create a socket
     // if ((servSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
@@ -77,21 +77,22 @@ int main(int argc, char const *argv[])
         //     perror("getsockname");
         // else
         //     printf("port number %d\n", serv_addr.sin_port);
+        string message = "Scanning for victims";
         struct udpwdesc{
-            udphdr udp;
-            char* description;
+            uint16_t source;
+            uint16_t dest;
+            uint16_t len;
+            uint16_t check;
+            char description[21] = {0};
         };
         udpwdesc udphd;
         //works with port 64702 and check const 0xEDB8
-        udphd.udp.source = htons(45117);
-        udphd.udp.dest = htons(i);
-        udphd.udp.len = htons(8);		/* udp length */
-        udphd.udp.check = htons(0x7065);		/* udp checksum */
-        udphd.description = "scanning for victims";
-        if (i == 4015){
-            // udphd.udp.dest = htons(4055);
-            serv_addr.sin_port = htons(i);
-        }
+        udphd.source = htons(45117);
+        udphd.dest = htons(i);
+        udphd.len = htons(8);		/* udp length */
+        udphd.check = htons(0x403c - i);		/* udp checksum */
+        
+        memcpy(udphd.description, message.c_str(), message.size() - 1);
         // connect to address and port
         // cout << i << " ";
         // fflush(stdout);
@@ -99,11 +100,11 @@ int main(int argc, char const *argv[])
         tv.tv_sec = 0;
         tv.tv_usec = 250;
         memset (buffer, 0, sizeof (buffer));
-        sendto(servSock , &udphd , sizeof(udphd) + 20, 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
+        sendto(servSock , &udphd , sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
         //set timeout of recvfrom
         setsockopt(servSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         // cout << htons(serv_addr.sin_port) << endl;        
-        if(int read = recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ){
+        if(recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ){
             string message = buffer + 28;
             cout << i << endl;
             cout << message << endl;
