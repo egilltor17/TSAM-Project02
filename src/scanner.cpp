@@ -19,6 +19,7 @@
 #include <netinet/udp.h>
 #include <netinet/ip.h>
 #include <netdb.h>
+#include <regex>
 
 #define BACKLOG  5
 
@@ -48,22 +49,22 @@ int main(int argc, char const *argv[]) {
     int highPort = atoi(argv[3]);
     char buffer[1024] = {0}; 
     struct sockaddr_in serv_addr;
-    struct sockaddr_in clie_addr;
     std::string address = "";
+    // struct sockaddr_in clie_addr;
 
     // register signal SIGINT and signal handler  
     signal(SIGINT, signalHandler); 
     
     //create a sockets
-    // if ((servSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) 
-    if((servSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
+    if ((servSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+    // if((servSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
         std::cout << "\n error raw socket creation unsuccessful" << endl; 
         return -1; 
     } 
-    if((clieSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) { 
-        std::cout << "\n error socket creation unsuccessful" << endl; 
-        return -1; 
-    } 
+    // if((clieSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) { 
+    //     std::cout << "\n error socket creation unsuccessful" << endl; 
+    //     return -1; 
+    // } 
 
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
@@ -133,39 +134,63 @@ int main(int argc, char const *argv[]) {
         //     perror("getsockname");
         // else
         //     printf("port number %d\n", serv_addr.sin_port);
+        string message = "Scanning for victims";
         struct udpwdesc {
-            udphdr udp;
-            char* description;
+            uint16_t source;
+            uint16_t dest;
+            uint16_t len;
+            uint16_t check;
+            char description[21] = {0};
         };
         udpwdesc udphd;
         //works with port 64702 and check const 0xEDB8
-        udphd.udp.source = htons(45117);
-        udphd.udp.dest = htons(i);
-        udphd.udp.len = htons(8);		/* udp length */
-        udphd.udp.check = htons(0x7065);		/* udp checksum */
-        udphd.description = "scanning for victims";
-        if(i == 4015) {
-            // udphd.udp.dest = htons(4055);
-            serv_addr.sin_port = htons(i);
-        }
+        udphd.source = htons(45117);
+        udphd.dest = htons(i);
+        udphd.len = htons(8);		/* udp length */
+        udphd.check = htons(0x403c - i);		/* udp checksum */
+        
+        memcpy(udphd.description, message.c_str(), message.size() - 1);
         // connect to address and port
         // std::cout << i << " ";
         // fflush(stdout);
         timeval tv;
         tv.tv_sec = 0;
         tv.tv_usec = 250;
-        memset(buffer, 0, sizeof (buffer));
-        sendto(servSock , &udphd , sizeof(udphd) + 20, 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
+        memset (buffer, 0, sizeof (buffer));
+        sendto(servSock , &udphd , sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));
         //set timeout of recvfrom
         setsockopt(servSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        // std::cout << htons(serv_addr.sin_port) << endl;        
-        if(int read = recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ) {
-            std::string message = buffer + 28;
-            std::cout << i << endl;
-            std::cout << message << endl;
+        // cout << htons(serv_addr.sin_port) << endl;        
+        if(recvfrom(servSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0 ) {
+            // string message = buffer + 28;    // Raw socket
+            string message = buffer;
+            cout << i << endl;
+            cout << message << endl;
+            std::cmatch cm;
+            // Port
+            if(std::regex_match(message.c_str(), cm, std::regex("This is the port:(\\d+)"))) {
+                std::cout << "Port: " << cm[1] << endl;
+            }
+            // Evil
+            if(std::regex_match(message.c_str(), std::regex("I only.*"))) {
+                std::cout << "Evil" << endl;
+            }
+            // Checksum
+            if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
+                std::cout << "Checksum: " << cm[1] << endl;
+            }
+            // Oracle
+            // if(std::regex_match(message.c_str(), std::regex(".*oracle.*"))) {
+            if(std::regex_match(message.c_str(), std::regex("I am the oracle.*\\n"))) {
+                std::cout << "Oracle" << endl;
+            }
+            // I only speak with fellow evil villains. (https://en.wikipedia.org/wiki/Evil_bit)
+            // Please send me a message with a valid udp checksum with value of 61453
+            // I am the oracle, reveal to me the hidden ports, and I shall show you the way.
         } else {
-            // std::cout << read << endl;
+            // cout << read << endl;
         }
     }
+    close(servSock);
     return 0; 
 } 
