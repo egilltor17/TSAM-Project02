@@ -42,6 +42,30 @@ void signalHandler(const int signum) {
     exit(signum);  
 }
 
+unsigned short csum(unsigned short *ptr,int nbytes) 
+{
+     long sum;
+    unsigned short oddbyte;
+     short answer;
+
+    sum=0;
+    while(nbytes>1) {
+        sum+=*ptr++;
+        nbytes-=2;
+    }
+    if(nbytes==1) {
+        oddbyte=0;
+        *((u_char*)&oddbyte)=*(u_char*)ptr;
+        sum+=oddbyte;
+    }
+
+    sum = (sum>>16)+(sum & 0xffff);
+    sum = sum + (sum>>16);
+    answer=(short)~sum;
+    
+    return(answer);
+}
+
 int main(int argc, char const *argv[]) {
     dgramSock = 0; 
     rawSock = 0; 
@@ -120,30 +144,36 @@ int main(int argc, char const *argv[]) {
     } 
     socklen_t addr_len = sizeof(serv_addr);
     std::cout << "Open ports: " << endl;
-    int myport = 0, myiphdr = 0, myudphdr = 0, evilport = 0, checksumport = 0, checksum = 0, fakeport = 0, oracleport = 0;
-    for(int i = lowPort; i <= highPort; i++) {
+    // int myport = 0, myiphdr = 0, myudphdr = 0, evilport = 0, checksumport = 0, checksum = 0, fakeport = 0, oracleport = 0;
+    for(int i = 4041; i <= 4041; i++) {
         serv_addr.sin_port = htons(i); 
 
-    string message = "Scanning for victims";    
-    struct udpwdesc{
-        uint16_t source;
-        uint16_t dest;
-        uint16_t len;
-        uint16_t check;
-        char description[21] = {0};
-    };
-    udpwdesc udphd;
-    memcpy(udphd.description, message.c_str(), message.size() - 1);
-    udphd.source = htons(45117);
-    udphd.dest = htons(i);
-    udphd.len = htons(8);		/* udp length */
-    udphd.check = htons(0x403c - i);		/* udp checksum */
-    timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 250;
-    memset(buffer, 0, sizeof (buffer));
-    sendto(rawSock , &udphd, sizeof(udphd) + 20, 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));    
+        string message = "Scanning for victims";    
+        struct udpwdesc{
+            uint16_t source;
+            uint16_t dest;
+            uint16_t len;
+            uint16_t check;
+            uint16_t offset;
+        };
 
+        udpwdesc udphd;
+        udphd.source = htons(45117);
+        udphd.dest = htons(i);
+        udphd.len = htons(8);		/* udp length */
+        udphd.check = htons(0x450c - i);		/* udp checksum */
+        printf("%02x\n", 0x754c ^ 0xf00d);
+        udphd.offset = htons(0x754c ^ 0xf00d);
+        timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 250;
+        
+        
+
+        memset(buffer, 0, sizeof (buffer));
+        sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));    
+
+        
         //set timeout of recvfrom
         setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         // cout << htons(serv_addr.sin_port) << endl;        
@@ -156,29 +186,34 @@ int main(int argc, char const *argv[]) {
             // Port
             if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
                 std::cout << "Port: " << cm[1] << endl;
-                fakeport = atoi(cm[1].str().c_str());
-                for(int i = 0; i < 20; i++) {
-                    printf("%02x ", (unsigned char)buffer[i]);
-                }
-                myport = htons(*(unsigned short*)(buffer + 22));
-                
-                cout <<  endl << myport << endl;
+
             }
             // Evil
             if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
                 std::cout << "Evil" << endl;
-                evilport = i;
+                // evilport = i;
             }
             // Checksum
             if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
                 std::cout << "Checksum" << endl;
-                checksumport = i;
-                checksum = atoi(cm[1].str().c_str());
+                // checksumport = i;
+                // checksum = atoi(cm[1].str().c_str());
+                                // fakeport = atoi(cm[1].str().c_str());
+                for(int i = 0; i < 20; i++) {
+                    printf("%02x ", (unsigned char)buffer[i]);
+                }
+                cout << endl;
+                for(int i = 20; i < 28; i++) {
+                    printf("%02x ", (unsigned char)buffer[i]);
+                }
+                unsigned short myport = htons(*(unsigned short*)(buffer + 22));
+                cout << "sport" <<  htons(*(unsigned short*)(buffer + 20)) << endl;
+                cout <<  endl << myport << endl;
             }
             // Oracle
             if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
                 std::cout << "Oracle" << endl;
-                oracleport = i;
+                // oracleport = i;
             }
         } 
     }  
