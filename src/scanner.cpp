@@ -22,6 +22,7 @@
 #include <regex>
 
 #define BACKLOG  5
+#define BUFFER_SIZE 1024
 
 // Debug macro that prints "[file_name](function::line): " before the supled message
 #define PRINT_ERROR(message) {\
@@ -33,6 +34,14 @@ using namespace std;
 
 int dgramSock; 
 int rawSock;
+
+struct udpwdesc {
+    uint16_t source;
+    uint16_t dest;
+    uint16_t len;
+    uint16_t check;
+    char description[21] = {0};
+};
 
 // A signal handle that safely disconnects the client before terminating
 void signalHandler(const int signum) {
@@ -47,9 +56,10 @@ int main(int argc, char const *argv[]) {
     rawSock = 0; 
     int lowPort = atoi(argv[2]);
     int highPort = atoi(argv[3]);
-    char buffer[1024] = {0}; 
+    char buffer[BUFFER_SIZE] = {0}; 
     struct sockaddr_in serv_addr;
     std::string address = "";
+    std::string message = "";
     // struct sockaddr_in clie_addr;
 
     // register signal SIGINT and signal handler  
@@ -124,27 +134,21 @@ int main(int argc, char const *argv[]) {
     for(int i = lowPort; i <= highPort; i++) {
         serv_addr.sin_port = htons(i); 
 
-    string message = "Scanning for victims";    
-    struct udpwdesc{
-        uint16_t source;
-        uint16_t dest;
-        uint16_t len;
-        uint16_t check;
-        char description[21] = {0};
-    };
+    message = "Scanning for victims";    
     udpwdesc udphd;
-    memcpy(udphd.description, message.c_str(), message.size() - 1);
     udphd.source = htons(45117);
     udphd.dest = htons(i);
-    udphd.len = htons(8);		/* udp length */
+    udphd.len = htons(8);		            /* udp length */
     udphd.check = htons(0x403c - i);		/* udp checksum */
+    memcpy(udphd.description, message.c_str(), message.size() - 1);
+
     timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 250;
     memset(buffer, 0, sizeof (buffer));
     sendto(rawSock , &udphd, sizeof(udphd) + 20, 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr));    
 
-        //set timeout of recvfrom
+        // set timeout of recvfrom
         setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         // cout << htons(serv_addr.sin_port) << endl;        
         if(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0) {
@@ -168,6 +172,11 @@ int main(int argc, char const *argv[]) {
             if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
                 std::cout << "Evil" << endl;
                 evilport = i;
+                char buffer2[BUFFER_SIZE] = {0};
+                int src_addr = *(int*)(buffer + 12); 
+                int des_addr = *(int*)(buffer + 16);
+                sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+                delete[] buffer2;
             }
             // Checksum
             if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
