@@ -32,7 +32,7 @@
 
 using namespace std;
 
-int dgramSock; 
+int rawIpSock; 
 int rawSock;
 
 struct udpwdesc {
@@ -75,10 +75,11 @@ unsigned short csum(unsigned short *ptr,int nbytes) {
 }
 
 int main(int argc, char const *argv[]) {
-    dgramSock = 0; 
+    rawIpSock = 0; 
     rawSock = 0; 
     int lowPort = atoi(argv[2]);
     int highPort = atoi(argv[3]);
+    int val;
     char buffer[BUFFER_SIZE] = {0}; 
     struct sockaddr_in serv_addr;
     std::string address = "";
@@ -89,7 +90,7 @@ int main(int argc, char const *argv[]) {
     signal(SIGINT, signalHandler); 
 
     //create a socket
-    if((dgramSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) { 
+    if((rawIpSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
         std::cout << "\n error dgram socket creation unsuccessful" << endl; 
         return -1; 
     } 
@@ -97,7 +98,6 @@ int main(int argc, char const *argv[]) {
         std::cout << "\n error raw socket creation unsuccessful" << endl; 
         return -1; 
     } 
-
 
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
@@ -155,18 +155,19 @@ int main(int argc, char const *argv[]) {
     std::cout << "Open ports: " << endl;
     // int myport = 0, myiphdr = 0, myudphdr = 0, evilport = 0, checksumport = 0, checksum = 0, fakeport = 0, oracleport = 0;
     for(int i = lowPort; i <= highPort; i++) {
+    // for(int i = 4010; i <= 4010; i++) {
         serv_addr.sin_port = htons(i); 
 
         message = "Scanning for victims";    
         udpwdesc udphd;
-        udphd.source = htons(45117);
+        udphd.source = htons(45116);
         udphd.dest = htons(i);
         udphd.len = htons(8);		            /* udp length */
         udphd.check = htons(0x403c - i);		/* udp checksum */
         udphd.offset = htons(0x1234);
         timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 250;
+        tv.tv_usec = 2500;
         memset(buffer, 0, sizeof (buffer));
         sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr)); 
 
@@ -186,15 +187,28 @@ int main(int argc, char const *argv[]) {
             }
             // Evil
             if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
-                std::cout << "Evil" << endl;
-                // // evilport = i;
+                // Copy buffer
                 char buffer2[BUFFER_SIZE] = {0};
-                char src_addr[4];
-                memcpy(src_addr, buffer2+16, sizeof(src_addr));
-                memcpy(buffer2+16, buffer2+12, sizeof(src_addr));
-                memcpy(buffer2+12, src_addr, sizeof(src_addr));
+                memcpy(buffer2, buffer, sizeof(buffer));
+                // Swap source and destination address
+                memcpy(buffer2+16, buffer+12, 4UL);
+                memcpy(buffer2+12, buffer+16, 4UL);
+                // Add our UDP header
+                memcpy(buffer2+20, &udphd, sizeof(udphd));
+                // With a sprinkle of evil
+                buffer2[6] |= 0x80;
 
-                sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+                setsockopt(rawIpSock, IPPROTO_IP, IP_HDRINCL, &val, sizeof(val));
+                sendto(rawIpSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+                memset(buffer2, 0, sizeof(buffer2));
+                setsockopt(rawIpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                if(recvfrom(rawIpSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0) {
+                    std::cout << "Success message: " << buffer2 +28 << endl;
+                    if(std::regex_match((char*)(buffer2+28), cm, std::regex("Hello, fellow villain!"))) {
+                        std::cout << "Something: " << endl;
+                    }
+                }
+                cout << endl;
             }
             // Checksum
             if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
