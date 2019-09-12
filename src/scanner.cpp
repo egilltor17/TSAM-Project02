@@ -188,14 +188,13 @@ int main(int argc, char const *argv[]) {
             if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
                 std::cout << "Evil" << endl;
                 // // evilport = i;
-                // char buffer2[BUFFER_SIZE] = {0};
-                // int src_addr = *(int*)(buffer + 12); 
-                // int des_addr = *(int*)(buffer + 16);
-                // memcpy(buffer2+12, (int*)des_addr, sizeof(des_addr));
-                // memcpy(buffer2+16, (int*)src_addr, sizeof(src_addr));
+                char buffer2[BUFFER_SIZE] = {0};
+                char src_addr[4];
+                memcpy(src_addr, buffer2+16, sizeof(src_addr));
+                memcpy(buffer2+16, buffer2+12, sizeof(src_addr));
+                memcpy(buffer2+12, src_addr, sizeof(src_addr));
 
-                // sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-                // delete[] buffer2;
+                sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
             }
             // Checksum
             if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
