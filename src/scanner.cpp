@@ -40,7 +40,7 @@ struct udpwdesc {
     uint16_t dest;
     uint16_t len;
     uint16_t check;
-    char description[21] = {0};
+    uint16_t offset;
 };
 
 // A signal handle that safely disconnects the client before terminating
@@ -51,11 +51,10 @@ void signalHandler(const int signum) {
     exit(signum);  
 }
 
-unsigned short csum(unsigned short *ptr,int nbytes) 
-{
-     long sum;
+unsigned short csum(unsigned short *ptr,int nbytes) {
+    long sum;
     unsigned short oddbyte;
-     short answer;
+    short answer;
 
     sum=0;
     while(nbytes>1) {
@@ -155,22 +154,21 @@ int main(int argc, char const *argv[]) {
     socklen_t addr_len = sizeof(serv_addr);
     std::cout << "Open ports: " << endl;
     // int myport = 0, myiphdr = 0, myudphdr = 0, evilport = 0, checksumport = 0, checksum = 0, fakeport = 0, oracleport = 0;
-    for(int i = 4041; i <= 4041; i++) {
+    for(int i = lowPort; i <= highPort; i++) {
         serv_addr.sin_port = htons(i); 
 
-    message = "Scanning for victims";    
-    udpwdesc udphd;
-    udphd.source = htons(45117);
-    udphd.dest = htons(i);
-    udphd.len = htons(8);		            /* udp length */
-    udphd.check = htons(0x403c - i);		/* udp checksum */
-    memcpy(udphd.description, message.c_str(), message.size() - 1);
-
-    timeval tv;
-    tv.tv_sec = 0;
-    tv.tv_usec = 250;
-    memset(buffer, 0, sizeof (buffer));
-    sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr)); 
+        message = "Scanning for victims";    
+        udpwdesc udphd;
+        udphd.source = htons(45117);
+        udphd.dest = htons(i);
+        udphd.len = htons(8);		            /* udp length */
+        udphd.check = htons(0x403c - i);		/* udp checksum */
+        udphd.offset = htons(0x1234);
+        timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 250;
+        memset(buffer, 0, sizeof (buffer));
+        sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr,(socklen_t)sizeof(serv_addr)); 
 
         // set timeout of recvfrom
         setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -189,12 +187,15 @@ int main(int argc, char const *argv[]) {
             // Evil
             if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
                 std::cout << "Evil" << endl;
-                // evilport = i;
-                char buffer2[BUFFER_SIZE] = {0};
-                int src_addr = *(int*)(buffer + 12); 
-                int des_addr = *(int*)(buffer + 16);
-                sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-                delete[] buffer2;
+                // // evilport = i;
+                // char buffer2[BUFFER_SIZE] = {0};
+                // int src_addr = *(int*)(buffer + 12); 
+                // int des_addr = *(int*)(buffer + 16);
+                // memcpy(buffer2+12, (int*)des_addr, sizeof(des_addr));
+                // memcpy(buffer2+16, (int*)src_addr, sizeof(src_addr));
+
+                // sendto(dgramSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+                // delete[] buffer2;
             }
             // Checksum
             if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
