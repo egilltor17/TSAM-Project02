@@ -34,6 +34,8 @@ using namespace std;
 
 int dgramSock;
 int rawSock;
+int rawIpSock; 
+
 
 struct udpwdesc {
     uint16_t source;
@@ -54,8 +56,10 @@ struct pseudo_header
 // A signal handle that safely disconnects the client before terminating
 void signalHandler(const int signum) {
     printf(" Signal (%d) received, closing connection.\n", signum);
+    if(dgramSock) { close(dgramSock); }
+    if(rawIpSock) { close(rawIpSock); }
     if(rawSock) { close(rawSock); }
-    if(rawSock) { close(rawSock); }
+
     exit(signum);
 }
 
@@ -85,9 +89,13 @@ unsigned short csum(unsigned short *ptr,int nbytes) {
 int main(int argc, char const *argv[]) {
     dgramSock = 0;
     rawSock = 0;
+    rawIpSock = 0; 
+
+    int val = 1;
     int lowPort = atoi(argv[2]);
     int highPort = atoi(argv[3]);
     char buffer[BUFFER_SIZE] = {0};
+    char evilBuffer[BUFFER_SIZE] = {0};
     struct sockaddr_in serv_addr;
     std::string address = "";
     std::string message = "";
@@ -105,7 +113,10 @@ int main(int argc, char const *argv[]) {
         std::cout << "\n error raw socket creation unsuccessful" << endl;
         return -1;
     }
-
+    if((rawIpSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
+        std::cout << "\n error dgram socket creation unsuccessful" << endl; 
+        return -1; 
+    } 
 
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
@@ -186,8 +197,9 @@ int main(int argc, char const *argv[]) {
         sendto(dgramSock , "scanning for victims", 21, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
         // set timeout of recvfrom
     }
-        memset(buffer, 0, sizeof (buffer));
-        setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    memset(buffer, 0, sizeof (buffer));
+    setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
     while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0)
     {
         // cout << htons(serv_addr.sin_port) << endl;            
@@ -252,15 +264,61 @@ int main(int argc, char const *argv[]) {
             message = buffer + 28;    // Raw socket
             // message = buffer;
             cout << message << endl;
-            udphd.offset = 0;
-            break;
-        }
-        // Oracle
-        if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
-            std::cout << "Oracle" << endl;
-            // oracleport = i;
-        }
-        memset(buffer, 0, sizeof (buffer));
-    }
-    return 0;
-}
+            std::cmatch cm;
+            // Port
+            if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
+                std::cout << "Port: " << cm[1] << endl;
+
+            }
+            // Evil
+            if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
+                // Copy buffer
+                char buffer2[BUFFER_SIZE] = {0};
+                memcpy(buffer2, buffer, sizeof(buffer));
+                // Swap source and destination address
+                memcpy(buffer2+16, buffer+12, 4UL);
+                memcpy(buffer2+12, buffer+16, 4UL);
+                // Add our UDP header
+                memcpy(buffer2+20, &udphd, sizeof(udphd));
+                // With a sprinkle of evil
+                buffer2[6] |= 0x80;
+
+                setsockopt(rawIpSock, IPPROTO_IP, IP_HDRINCL, &val, sizeof(val));
+                sendto(rawIpSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+                memset(buffer2, 0, sizeof(buffer2));
+                setsockopt(rawIpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+                if(recvfrom(rawIpSock, buffer2, sizeof(buffer2), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0) {
+                    std::cout << "Success message: " << buffer2 +28 << endl;
+                    if(std::regex_match((char*)(buffer2+28), cm, std::regex("Hello, fellow villain!"))) {
+                        std::cout << "Something: " << endl;
+                    }
+                }
+                cout << endl;
+            }
+            // Checksum
+            if(std::regex_match(message.c_str(), cm, std::regex("Please send.*of (\\d+)"))) {
+                std::cout << "Checksum" << endl;
+                // checksumport = i;
+                // checksum = atoi(cm[1].str().c_str());
+                                // fakeport = atoi(cm[1].str().c_str());
+                for(int i = 0; i < 20; i++) {
+                    printf("%02x ", (unsigned char)buffer[i]);
+                }
+                cout << endl;
+                for(int i = 20; i < 28; i++) {
+                    printf("%02x ", (unsigned char)buffer[i]);
+                }
+                unsigned short myport = htons(*(unsigned short*)(buffer + 22));
+                cout << "sport" <<  htons(*(unsigned short*)(buffer + 20)) << endl;
+                cout <<  endl << myport << endl;
+            }
+            // Oracle
+            if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
+                std::cout << "Oracle" << endl;
+                // oracleport = i;
+            }
+        } 
+        memset(buffer,0,sizeof(buffer));
+    }  
+    return 0; 
+} 
