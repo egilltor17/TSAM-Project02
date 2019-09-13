@@ -200,9 +200,9 @@ int main(int argc, char const *argv[]) {
         
     u_int32_t myAddress;
     bool firstRecv = true;
-    int easyPort = 0;
+    string easyPort = "";
     int oraclePort = 0;
-    int evilPort = 0;
+    string evilPort = "";
     string secretQuote;
     memset(buffer, 0, sizeof (buffer));
     while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0)
@@ -249,14 +249,13 @@ int main(int argc, char const *argv[]) {
         // Port
         else if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
             // std::cout << "Port: " << cm[1] << endl;
-            easyPort = atoi(cm[1].str().c_str());
+            easyPort = cm[1].str();
 
         }
         // Evil
         else if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
             // cout << "Evil" << endl;
-            evilPort = somePort;
-            udphd.dest = htons(evilPort);
+            udphd.dest = htons(somePort);
             memcpy(evilBuffer, buffer, sizeof(buffer));
             // Swap source and destination address
             memcpy(evilBuffer+16, buffer+12, 4UL);
@@ -278,12 +277,36 @@ int main(int argc, char const *argv[]) {
             // cout << secretQuote << endl;
         }
         else if(std::regex_match(message.c_str(), cm, std::regex("Hello.*\\n(\\d+)"))) {
-            evilPort = atoi(cm[1].str().c_str());
+            evilPort = cm[1].str();
         }
 
         memset(buffer, 0, sizeof(buffer));
     }  
+    serv_addr.sin_port = htons(oraclePort);
     cout << "evil port " << evilPort << "\nsecret message " << secretQuote << endl;
-    
+    string phrase = easyPort + (string)", " + evilPort;
+    cout << phrase << endl;
+    sendto(dgramSock , phrase.c_str(), phrase.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) > 0){
+    //     std::cmatch cm;        
+    //     if(std::regex_match(message.c_str(), cm, std::regex("!((\\d+),)*!"))) {
+    //          string match = cm.str();
+    //          for(int i = 0; i < match.size; i++){
+    //              if (match[i] == ','){
+
+    //              }
+    //          }
+    //     }
+    // }
+    // serv_addr.sin_port = htons(atoi(easyPort.c_str()));
+    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // serv_addr.sin_port = htons(atoi(evilPort.c_str()));
+    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // serv_addr.sin_port = htons(atoi(easyPort.c_str())); 
+    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // serv_addr.sin_port = htons(atoi(evilPort.c_str()));
+    // sendto(dgramSock , secretQuote.c_str(), secretQuote.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+
     return 0; 
 } 
