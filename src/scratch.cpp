@@ -1,244 +1,323 @@
 //
-// Simple client for TSAM-409 Project 2 b
+// Port scanner for TSAM-409 Project 2
 //
 // Compile: g++ -Wall -std=c++11 scanner.cpp -o scanner
+//          or run make
 //
-// Command line: ./client <ip host> <ip port low> <ip port high>
+// Command line: ./scanner <ip host> <ip port low> <ip port high>
 //
-// Author: Egill Torfason (egilltor17@ru.is)
+// Authors: Egill Torfason (egilltor17@ru.is)
+//          Hallgrímur Andrésson (hallgrimura17@ru.is)
 //
 #include <stdio.h>
-#include <errno.h>
 #include <csignal>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #include <string.h>
-#include <algorithm>
-#include <map>
-#include <vector>
-
 #include <iostream>
-#include <sstream>
-#include <thread>
-#include <map>
+#include <netinet/udp.h>
+#include <netinet/ip.h>
+#include <netdb.h>
+#include <regex>
 
-#define BUFFER_SIZE 1024    // max request length
+#define BACKLOG  5
+#define BUFFER_SIZE 1024
 
 // Debug macro that prints "[file_name](function::line): " before the supled message
 #define PRINT_ERROR(message) {\
     std::string _file = __FILE__; \
     printf("[%s](%s::%d): %s\n", _file.substr(_file.rfind('/') + 1, _file.npos).c_str(), __FUNCTION__, __LINE__, message); \
 }
-// Macro that is used to copy 0 to BUFFER_SIZE chars when takin user input
-#define COPY_SIZE(buf) ((sizeof(buf) < BUFFER_SIZE ? sizeof(buf) : BUFFER_SIZE) - 1)
 
-int sock = 0;
+using namespace std;
+
+int dgramSock;
+int rawSock;
+int rawIpSock; 
+
+
+struct udpwdesc 
+{
+    uint16_t source;
+    uint16_t dest;
+    uint16_t len;
+    uint16_t check;
+    uint16_t offset;
+};
+struct pseudo_header 
+{
+    u_int32_t source_address;
+    u_int32_t dest_address;
+    u_int8_t placeholder;
+    u_int8_t protocol;
+    u_int16_t udp_length;
+};
 
 // A signal handle that safely disconnects the client before terminating
 void signalHandler(const int signum) {
     printf(" Signal (%d) received, closing connection.\n", signum);
-    if(sock) { close(sock); }
-    exit(signum);  
+    if(dgramSock) { close(dgramSock); }
+    if(rawIpSock) { close(rawIpSock); }
+    if(rawSock) { close(rawSock); }
+
+    exit(signum);
 }
 
-int main(int argc, char *argv[]) {
-    struct sockaddr_in server; 
-    std::string host;
-    sock = 0;
-    int ip_low = 0;
-    int ip_high = 0;
+unsigned short csum(unsigned short *ptr,int nbytes) {
+    long sum;
+    unsigned short oddbyte;
+    short answer;
 
-    // register signal SIGINT and signal handler  
-    signal(SIGINT, signalHandler); 
+    sum=0;
+    while(nbytes>1) {
+        sum+=*ptr++;
+        nbytes-=2;
+    }
+    if(nbytes==1) {
+        oddbyte=0;
+        *((u_char*)&oddbyte)=*(u_char*)ptr;
+        sum+=oddbyte;
+    }
 
+    sum = (sum>>16)+(sum & 0xffff);
+    sum = sum + (sum>>16);
+    answer=(short)~sum;
+
+    return(answer);
+}
+
+int main(int argc, char const *argv[]) {
+    dgramSock = 0;
+    rawSock = 0;
+    rawIpSock = 0; 
+
+    int val = 1;
+    int lowPort = atoi(argv[2]);
+    int highPort = atoi(argv[3]);
+    char buffer[BUFFER_SIZE] = {0};
+    char evilBuffer[BUFFER_SIZE] = {0};
+    struct sockaddr_in serv_addr;
+    std::string address = "";
+    std::string message = "";
+    std::cmatch cm;
+
+
+    // Register signal SIGINT and signal handler
+    signal(SIGINT, signalHandler);
+
+    // Argument validation
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
         printf("Usage: client <host> <ip port low> <ip port high>\n");
-        exit(0);
+        return -1;
     }
 
+    address = argv[1];
+
     // <ip port low> <ip port high> must be integers
-    if(!((ip_low = atoi(argv[2])) || argv[2][0] == 0) || !(ip_high = atoi(argv[3]))) {
+    if(!((lowPort = atoi(argv[2])) || argv[2][0] == 0) || !(highPort = atoi(argv[3]))) {
         printf("ip port high and low must be integers");
         return -1;
     }
     // <ip port low> must be lower or equal to <ip port high>
-    if(ip_low > ip_high) {
+    if(lowPort > highPort) {
         printf("<ip port low> must be lower or equal to <ip port high>");
         return -1;
     }
 
     // <ip port low> and <ip port high> must be in range of valid ports
-    if(ip_low <= 0 || ip_low > 65535) {
+    if(lowPort <= 0 || lowPort > 65535) {
         printf("<ip port low> must be in range [0 - 65534]\n");
         return -1;
     }
 
-    if(ip_high <= 0 || ip_high > 65535) {
+    if(highPort <= 0 || highPort > 65535) {
         printf("<ip port high> must be in range [0 - 65534]\n");
         return -1;
     }
 
+
+    // Create sockets
+    if((dgramSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+        std::cout << "\n error dgram socket creation unsuccessful" << endl;
+        return -1;
+    }
+    if((rawSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) {
+        std::cout << "\n error raw socket creation unsuccessful" << endl;
+        return -1;
+    }
+    if((rawIpSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
+        std::cout << "\n error rawIp socket creation unsuccessful" << endl; 
+        return -1; 
+    } 
+
+
+    // initialize port in serv_addr object
+    serv_addr.sin_family = AF_INET;
+
     // Parse host name to IP address if possible
-    // http://www.cplusplus.com/forum/articles/9742/
     hostent *record = gethostbyname(argv[1]);
-    host = record ? inet_ntoa(*(in_addr *)record->h_addr) : argv[1];
+    address = record ? inet_ntoa(*(in_addr *)record->h_addr) : argv[1];
 
-    // Set type of connection
-    server.sin_family = AF_INET;
+    // Convert address to binary
+    if(inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0) {
+        std::cout << "\nAddress was not accepted" << endl;
+        return -1;
+    }
+    // if(inet_pton(AF_INET, argv[1], &serv_addr.sin_addr) <= 0)
+    // {
+    //     string address = argv[1];
+    //     if(address == "skel.ru.is"){
+    //         inet_pton(AF_INET, "130.208.243.61", &serv_addr.sin_addr);
+    //     } else {
+    //         cout << "\nAddress was not accepted" << endl;
+    //         return -1;
+    //     }
+    // }
+    u_int16_t myPort = 45117;
+    socklen_t addr_len = sizeof(serv_addr);
+    // Create pseudo header
+    pseudo_header psh;
+    psh.source_address = inet_addr("127.0.0.1");
+    psh.dest_address = serv_addr.sin_addr.s_addr;
+    psh.placeholder = 0;
+    psh.protocol = IPPROTO_UDP;
+    psh.udp_length = htons(10);
+    // Create UDP header
+    udpwdesc udphd;
+    udphd.source = htons(myPort);
+    udphd.dest = 0;
+    udphd.len = htons(10);
+    udphd.check = 0;
+    udphd.offset = 0;
+    // Create time val for timeout
+    timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
 
-    // Scanning loop
-    for(int i = ip_low; i <= ip_high; i++) {
+    for(int i = lowPort; i <= highPort; i++) {
+        serv_addr.sin_port = htons(i);
+        sendto(dgramSock , "scanning for victims", 21, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    }
 
-        /* 
-        // Open a socket TCP
-        if((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) { 
-            PRINT_ERROR("Socket creation error");
-            return -1;
-        }
-        */
+
+    setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(rawIpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(rawIpSock, IPPROTO_IP, IP_HDRINCL, &val, sizeof(val));
+
         
-        // Open a socket UDP
-        if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
-            PRINT_ERROR("Socket creation error");
-            return -1;
+    u_int32_t myAddress;
+    bool firstRecv = true;
+    string easyPort = "";
+    int oraclePort = 0;
+    string evilPort = "";
+    string secretQuote = "";
+    int recvSize = 0;
+    memset(buffer, 0, sizeof (buffer));
+    while((recvSize = recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len)) > 0) {
+        // cout << "receiving" << endl;
+        // cout << htons(serv_addr.sin_port) << endl;            
+        if(firstRecv){
+            firstRecv = false;
+            myAddress = (buffer[19] << 24) + (buffer[18] << 16) + (buffer[17] << 8) + buffer[16];
+            // myAddress = *(int*)(buffer+16);
+            psh.source_address = myAddress;
         }
-        
-        /*
-        // Open a socket RAW (might need sudo)
-        if((sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
-            PRINT_ERROR("Socket creation error");
-            return -1;
+        // select(rawSock, );
+        message =  buffer + 28;    // Raw socket buffer offset 
+        // message = ((string)buffer).substr(28, recvSize - 28);
+        unsigned short somePort = ((unsigned char)(buffer[20]) << 8) + (unsigned char)(buffer[21]);
+        // cout << "Port: " << somePort << ": " << message << endl;
+        // Checksum
+        if(std::regex_match(message.c_str(), cm, std::regex(".*checksum.* of (\\d+)"))) {
+            // std::cout << "Checksum " << cm[1] << endl;
+            unsigned short checksum = atoi(cm[1].str().c_str());
+            udphd.dest = htons(somePort);  
+            udphd.check = 0;            
+            memcpy(buffer, (char*)&psh, sizeof(psh));
+            memcpy(buffer + sizeof(psh), (char*)&udphd, sizeof(udphd));
+            udphd.check = csum((unsigned short*)&buffer, sizeof(psh) + sizeof(udphd));
+            memset(buffer, 0, sizeof (buffer));
+
+            udphd.offset = -(htons((unsigned short)(checksum)) - udphd.check);
+            // printf("desired %x current %x, offset %x\n", (unsigned short)(~checksum), udphd.check, (unsigned short)udphd.offset);
+            udphd.check = 0;
+            memcpy(buffer, (char*)&psh, sizeof(psh));
+            memcpy(buffer + sizeof(psh), (char*)&udphd, sizeof(udphd));
+            udphd.check = csum((unsigned short*)&buffer, sizeof(psh) + sizeof(udphd));
+            memset(buffer, 0, sizeof (buffer));
+            sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+
         }
-        */
+        // Port
+        else if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
+            // std::cout << "Port: " << cm[1] << endl;
+            easyPort = cm[1].str();
 
-        // Set port
-        server.sin_port = htons(i); 
- 
-        // Convert IPv4 and IPv6 addresses from text to binary form 
-        if(inet_pton(AF_INET, host.c_str(), &server.sin_addr) <= 0) { 
-            PRINT_ERROR("Invalid address/ Address not supported");
-            return -1;
-        } 
-    
-        // Connext to the socket
-        if(connect(sock, (sockaddr *)&server, sizeof(server)) < 0) { 
-            printf("Port: %d - Connection failed\n", i);
-            // PRINT_ERROR("Connection Failed");
-            // return -1;
         }
-        
-        if(sendto(sock, "msg", sizeof("msg"), 0, (sockaddr *)&server, sizeof(server)) < 0) {
-            printf("someting happend :(\n");
+        // Evil
+        else if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
+            // cout << "Evil" << endl;
+            udphd.dest = htons(somePort);
+            memcpy(evilBuffer, buffer, sizeof(buffer));
+            // Swap source and destination address
+            memcpy(evilBuffer+16, buffer+12, 4UL);
+            memcpy(evilBuffer+12, buffer+16, 4UL);
+            // Add our UDP header
+            memcpy(evilBuffer+20, &udphd, sizeof(udphd));
+            // With a sprinkle of evil
+            evilBuffer[6] |= 0x80;
+            sendto(rawIpSock , &evilBuffer, 112, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+        }
+        // Oracle
+        else if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
+            // std::cout << "Oracle" << endl;
+            oraclePort = somePort;
+        }
+        else if(std::regex_match(message.c_str(), cm, std::regex("Good.*\\n\"(.*)\""))) {
+            // std::cout << message << endl;
+            secretQuote = cm[1].str();
+            cout << secretQuote << endl;
+        }
+        else if(std::regex_match(message.c_str(), cm, std::regex("Hello.*\\n(\\d+)"))) {
+            evilPort = cm[1].str();
         }
 
-        close(sock);
-    }
-    return 0;
-}
+        memset(buffer, 0, sizeof(buffer));
+    }  
 
-/* 
-#include <sys/types.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <memory.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <iostream>
 
-int resolvehelper(const char *hostname, int family, const char *service, sockaddr_storage *pAddr) {
-    int result;
-    addrinfo *result_list = NULL;
-    addrinfo hints = {};
-    hints.ai_family = family;
-    hints.ai_socktype = SOCK_DGRAM; // without this flag, getaddrinfo will return 3x the number of addresses (one for each socket type).
-    result = getaddrinfo(hostname, service, &hints, &result_list);
-    if(result == 0) {
-        //ASSERT(result_list->ai_addrlen <= sizeof(sockaddr_in));
-        memcpy(pAddr, result_list->ai_addr, result_list->ai_addrlen);
-        freeaddrinfo(result_list);
-    }
-    return result;
-}
-
-int main() {
-    int result = 0;
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-
-    char szIP[100];
-
-    sockaddr_in addrListen = {}; // zero-int, sin_port is 0, which picks a random port for bind.
-    addrListen.sin_family = AF_INET;
-    result = bind(sock, (sockaddr *)&addrListen, sizeof(addrListen));
-    if(result == -1) {
-        int lasterror = errno;
-        std::cout << "error: " << lasterror;
-        exit(1);
-    }
-
-    sockaddr_storage addrDest = {};
-    result = resolvehelper("192.168.0.4", AF_INET, "9000", &addrDest);
-    if(result != 0) {
-        int lasterror = errno;
-        std::cout << "error: " << lasterror;
-        exit(1);
-    }
-
-    const char *msg = "Jane Doe";
-    size_t msg_length = strlen(msg);
-
-    result = sendto(sock, msg, msg_length, 0, (sockaddr *)&addrDest, sizeof(addrDest));
-
-    std::cout << result << " bytes sent" << std::endl;
-
-    return 0;
+    // serv_addr.sin_port = htons(oraclePort);
+    // cout << "evil port " << evilPort << "\nsecret message " << secretQuote << endl;
+    // string phrase = easyPort + (string)", " + evilPort;
+    // sendto(dgramSock , phrase.c_str(), phrase.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    // while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) > 0) {
+    //     // cout << ((((unsigned char)(buffer[22])) << 8) + (unsigned char)(buffer[23])) << endl;
+    //     // if(((((unsigned char)(buffer[22])) << 8) + (unsigned char)(buffer[23])) == myPort) {
+    //         u_int16_t port = 0;
+    //         message = buffer+28;
+    //         // message = buffer;
+    //         cout << "Reading port sequence: " << message << endl;
+    //         std::regex re("(\\d{3}\\d+)");
+    //         std::sregex_iterator next(message.begin(), message.end(), re);
+    //         std::sregex_iterator end;
+    //         while(next != end) {
+    //             if(port) {
+    //                 serv_addr.sin_port = htons(port);
+    //                 sendto(dgramSock , "knock\n", 6UL, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    //             }
+    //             std::smatch match = *next;
+    //             port = atoi(match.str().c_str());
+    //             next++;
+    //         } 
+    //         if(port) {
+    //             serv_addr.sin_port = htons(port);
+    //             secretQuote = "How many chucks would a woodchuck chuck, if a woodchuck could chuck wood!";
+    //             sendto(dgramSock , secretQuote.c_str(), secretQuote.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+    //         }
+    //     // }
+    //     memset(buffer, 0, sizeof(buffer));
+    // }
+    return 0; 
 } 
-*/
-
-
-unsigned short csum(unsigned short *ptr, int nbytes) {
-	register long sum;
-	unsigned short oddbyte;
-	register short answer;
-
-	sum=0;
-	while(nbytes > 1) {
-		sum += *ptr++;
-		nbytes-=2;
-	}
-	if(nbytes == 1) {
-		oddbyte=0;
-		*((u_char*) & oddbyte) = *(u_char*)ptr;
-		sum += oddbyte;
-	}
-
-	sum = (sum >> 16)+(sum & 0xffff);
-	sum = sum + (sum >> 16);
-	answer=(short)~sum;
-	
-	return(answer);
-}
-
-
-uint16_t csum(void *buf, int cb) {
-    uint16_t *ptr = (uint16_t *)buf;
-    //initialize the sum with the last byte in case of odd size, otherwise to zero
-    int32_t sum = (cb&1) ? ((uint8_t)buf)[cb-1] : 0;
-    cb/=2;
-    while(cb--) sum += *ptr++;
-    return (uint16_t)~((sum>>16)+(sum & 0xffff));
-}
