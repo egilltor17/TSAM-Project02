@@ -114,7 +114,7 @@ int main(int argc, char const *argv[]) {
         return -1;
     }
     if((rawIpSock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) { 
-        std::cout << "\n error dgram socket creation unsuccessful" << endl; 
+        std::cout << "\n error rawIp socket creation unsuccessful" << endl; 
         return -1; 
     } 
 
@@ -170,16 +170,16 @@ int main(int argc, char const *argv[]) {
             return -1;
         }
     }
+    u_int16_t myPort = 45117;
     socklen_t addr_len = sizeof(serv_addr);
     pseudo_header psh;
     psh.source_address = inet_addr("127.0.0.1");
-    // printf("%02x\n",psh.source_address);
     psh.dest_address = serv_addr.sin_addr.s_addr;
     psh.placeholder = 0;
     psh.protocol = IPPROTO_UDP;
     psh.udp_length = htons(10);
     udpwdesc udphd;
-    udphd.source = htons(45117);
+    udphd.source = htons(myPort);
     udphd.dest = 0;
     udphd.len = htons(10);
     udphd.check = 0;
@@ -285,28 +285,32 @@ int main(int argc, char const *argv[]) {
     serv_addr.sin_port = htons(oraclePort);
     cout << "evil port " << evilPort << "\nsecret message " << secretQuote << endl;
     string phrase = easyPort + (string)", " + evilPort;
-    cout << phrase << endl;
     sendto(dgramSock , phrase.c_str(), phrase.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-    // while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) > 0){
-    //     std::cmatch cm;        
-    //     if(std::regex_match(message.c_str(), cm, std::regex("!((\\d+),)*!"))) {
-    //          string match = cm.str();
-    //          for(int i = 0; i < match.size; i++){
-    //              if (match[i] == ','){
-
-    //              }
-    //          }
-    //     }
-    // }
-    // serv_addr.sin_port = htons(atoi(easyPort.c_str()));
-    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-    // serv_addr.sin_port = htons(atoi(evilPort.c_str()));
-    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-    // serv_addr.sin_port = htons(atoi(easyPort.c_str())); 
-    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-    // sendto(dgramSock , "knock", 5, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-    // serv_addr.sin_port = htons(atoi(evilPort.c_str()));
-    // sendto(dgramSock , secretQuote.c_str(), secretQuote.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
-
+    u_int16_t port = 0;
+    while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) > 0) {
+        message = buffer+28;
+        // message = buffer;
+        cout << "Reading port sequence: " << message << endl;
+        std::regex re("(\\d{3}\\d+)");
+        std::sregex_iterator next(message.begin(), message.end(), re);
+        std::sregex_iterator end;
+        while(next != end) {
+            if(port) {
+                serv_addr.sin_port = htons(port);
+                sendto(dgramSock , "knock\n", 6UL, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+            }
+            std::smatch match = *next;
+            port = atoi(match.str().c_str());
+            std::cout << port << "\n";
+            next++;
+        } 
+        if(port) {
+            serv_addr.sin_port = htons(port);
+            // sendto(dgramSock , secretQuote.c_str(), secretQuote.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+            sendto(dgramSock , "How much wood could a woodchuck chuck if a woodchuck could chuck wood!\n", 72, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
+            port = 0;
+        }
+        memset(buffer, 0, sizeof(buffer));
+    }
     return 0; 
 } 
