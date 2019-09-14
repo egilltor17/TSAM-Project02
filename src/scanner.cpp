@@ -7,7 +7,7 @@
 // Command line: ./scanner <ip host> <ip port low> <ip port high>
 //
 // Authors: Egill Torfason (egilltor17@ru.is)
-//          Hallgrímur Andrésson (hallgrimura17@ru.is)
+//          Hallgrímur Snær Andrésson (hallgrimura17@ru.is)
 //
 #include <stdio.h>
 #include <csignal>
@@ -20,6 +20,7 @@
 #include <netinet/ip.h>
 #include <netdb.h>
 #include <regex>
+#include <set>
 
 #define BACKLOG  5
 #define BUFFER_SIZE 1024
@@ -32,19 +33,11 @@
 
 using namespace std;
 
-int dgramSock;
-int rawSock;
-int rawIpSock; 
+int dgramSock; //main socket for port scanning and sending messages
+int rawSock; //socket to send the udpheader with correct checksum
+int rawIpSock; //socket to send with custom ipv4 headers, for the evil bit
 
-
-struct udpwdesc 
-{
-    uint16_t source;
-    uint16_t dest;
-    uint16_t len;
-    uint16_t check;
-    uint16_t offset;
-};
+//part of calculating the checksum
 struct pseudo_header
 {
     u_int32_t source_address;
@@ -53,17 +46,32 @@ struct pseudo_header
     u_int8_t protocol;
     u_int16_t udp_length;
 };
+//custom udpheader, sending max length on the data is 2 bytes
+struct udpwdesc 
+{
+    uint16_t source;
+    uint16_t dest;
+    uint16_t len;
+    uint16_t check;
+    uint16_t offset;
+};
 
-// A signal handle that safely disconnects the client before terminating
+// A signal handler that safely disconnects the client before terminating
 void signalHandler(const int signum) {
     printf(" Signal (%d) received, closing connection.\n", signum);
-    if(dgramSock) { close(dgramSock); }
-    if(rawIpSock) { close(rawIpSock); }
-    if(rawSock) { close(rawSock); }
+    if(dgramSock) {
+        close(dgramSock);
+    }
+    if(rawIpSock) {
+        close(rawIpSock);
+    }
+    if(rawSock) {
+        close(rawSock);
+    }
 
     exit(signum);
 }
-
+//The function csum was implemented after the same function in: https://github.com/seifzadeh/c-network-programming-best-snipts/blob/master/Programming%20raw%20udp%20sockets%20in%20C%20on%20Linux:
 unsigned short csum(unsigned short *ptr,int nbytes) {
     long sum;
     unsigned short oddbyte;
@@ -79,7 +87,7 @@ unsigned short csum(unsigned short *ptr,int nbytes) {
         *((u_char*)&oddbyte)=*(u_char*)ptr;
         sum+=oddbyte;
     }
-
+    //add the overflow
     sum = (sum>>16)+(sum & 0xffff);
     sum = sum + (sum>>16);
     answer=(short)~sum;
@@ -88,16 +96,17 @@ unsigned short csum(unsigned short *ptr,int nbytes) {
 }
 
 int main(int argc, char const *argv[]) {
+    
     dgramSock = 0;
     rawSock = 0;
     rawIpSock = 0; 
 
     int val = 1;
-    int lowPort = atoi(argv[2]);
-    int highPort = atoi(argv[3]);
-    char buffer[BUFFER_SIZE] = {0};
-    char evilBuffer[BUFFER_SIZE] = {0};
-    struct sockaddr_in serv_addr;
+    int lowPort = atoi(argv[2]); //port to start the port scan from
+    int highPort = atoi(argv[3]); //last port in the port scan
+    char buffer[BUFFER_SIZE] = {0}; //Usually used for the udp packet
+    char evilBuffer[BUFFER_SIZE] = {0}; //used to send the packet with the evil bit
+    struct sockaddr_in serv_addr; //variable for the server we are supposed to send the messages to
     std::string address = "";
     std::string message = "";
     std::cmatch cm;
@@ -106,7 +115,7 @@ int main(int argc, char const *argv[]) {
     // register signal SIGINT and signal handler
     signal(SIGINT, signalHandler);
 
-    //create a socket
+    //create sockets
     if((dgramSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         std::cout << "\n error dgram socket creation unsuccessful" << endl;
         return -1;
@@ -119,6 +128,16 @@ int main(int argc, char const *argv[]) {
         std::cout << "\n error dgram socket creation unsuccessful" << endl; 
         return -1; 
     } 
+
+    //variable for timeout
+    timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    //set timeout of the sockets we will receive on
+    setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(rawIpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    //change options so the message can be sent with a custom ipv4 header
+    setsockopt(rawIpSock, IPPROTO_IP, IP_HDRINCL, &val, sizeof(val));
 
     // Require three arguments <host>, <ip port low> and <ip port high>
     if(argc != 4) {
@@ -162,97 +181,96 @@ int main(int argc, char const *argv[]) {
         std::cout << "\nAddress was not accepted" << endl;
         return -1;
     }
-    // if(inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr) <= 0)
-    // {
-    //     if(address == "skel.ru.is"){
-    //         address = "130.208.243.61";
-    //         inet_pton(AF_INET, address.c_str(), &serv_addr.sin_addr);
-    //     } else {
-    //         cout << "\nAddress was not accepted" << endl;
-    //         return -1;
-    //     }
-    // }
+
     socklen_t addr_len = sizeof(serv_addr);
+    //fill the pseudo header to prepare for custom checksum calculation
     pseudo_header psh;
     psh.source_address = inet_addr("127.0.0.1");
-    // printf("%02x\n",psh.source_address);
     psh.dest_address = serv_addr.sin_addr.s_addr;
     psh.placeholder = 0;
     psh.protocol = IPPROTO_UDP;
     psh.udp_length = htons(10);
+
     udpwdesc udphd;
-    udphd.source = htons(11117);
+    udphd.source = 0;
     udphd.dest = 0;
     udphd.len = htons(10);
     udphd.check = 0;
     udphd.offset = 0;
-    
-    timeval tv;
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
 
+
+    //send out udp message to all ports on the range given
     for(int i = lowPort; i <= highPort; i++) {
         serv_addr.sin_port = htons(i);
         sendto(dgramSock , "scanning for victims", 21, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
     }
-    setsockopt(rawSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(rawIpSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(rawIpSock, IPPROTO_IP, IP_HDRINCL, &val, sizeof(val));
 
         
-    u_int32_t myAddress;
-    bool firstRecv = true;
-    string easyPort = "";
+    u_int32_t myAddress; //the address of the client
+    unsigned short myPort = 0;
+    bool firstRecv = true;  //first receive lets us know what our address is
     int oraclePort = 0;
-    string evilPort = "";
+    string easyPort = ""; //port for the first answer
+    string evilPort = ""; //port for the second answer
     string secretQuote = "";
+    set <int, greater <int>> openPorts; //set of all open ports
     memset(buffer, 0, sizeof (buffer));
+    //read udp answers from all ports that was sent to
     while(recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len) >= 0)
     {
+        //if the message is not from the address that was given, ignore it
         if(*(u_int32_t* )(buffer + 12) != inet_addr(address.c_str())){
             continue;
         }
+        //With the first receive we can get our assigned address and our port with binding
         if(firstRecv){
             firstRecv = false;
             myAddress = (buffer[19] << 24) + (buffer[18] << 16) + (buffer[17] << 8) + buffer[16];
             psh.source_address = myAddress;
+            myPort = ((unsigned char)(buffer[22]) << 8) + (unsigned char)(buffer[23]);
+            udphd.source = htons(myPort);
         }
-        
-        string message = buffer + 28;    // Raw socket
-        
+        // + 28 because raw socket
+        string message = buffer + 28;
 
-        unsigned short somePort = ((unsigned char)(buffer[20]) << 8) + (unsigned char)(buffer[21]);
+        //port that we received from
+        unsigned short notMyPort = ((unsigned char)(buffer[20]) << 8) + (unsigned char)(buffer[21]);
         std::cmatch cm;
-
+        //this port is active add it to the set
+        openPorts.insert(notMyPort);
         // Checksum
         if(std::regex_match(message.c_str(), cm, std::regex(".*checksum.* of (\\d+)"))) {
-            udphd.dest = htons(somePort);  
-            udphd.check = 0;            
-            memcpy(buffer, (char*)&psh, sizeof(psh));
-            memcpy(buffer + sizeof(psh), (char*)&udphd, sizeof(udphd));
-            udphd.check = csum((unsigned short*)&buffer, sizeof(psh) + sizeof(udphd));
-            memset(buffer, 0, sizeof (buffer));
-
-            unsigned short checksum = atoi(cm[1].str().c_str());
-            udphd.offset = -(htons((unsigned short)(checksum)) - udphd.check);
+            
+            //correct the udp header
+            udphd.dest = htons(notMyPort);  
             udphd.check = 0;
+            //move the pseudo header into buffer            
+            memcpy(buffer, (char*)&psh, sizeof(psh));
+            //move the udp header into buffer            
+            memcpy(buffer + sizeof(psh), (char*)&udphd, sizeof(udphd));
+            //Checksum the message is supposed to have
+            unsigned short desiredChecksum = atoi(cm[1].str().c_str());
+            //calculate what is needed to add to the packet so the checksum becomes the desired and asigning that value to the data
+            udphd.offset = -(htons((unsigned short)(desiredChecksum)) - csum((unsigned short*)&buffer, sizeof(psh) + sizeof(udphd)));
+            
+            memset(buffer, 0, sizeof (buffer));
             memcpy(buffer, (char*)&psh, sizeof(psh));
             memcpy(buffer + sizeof(psh), (char*)&udphd, sizeof(udphd));
+            //calculate again just to make sure its correct
             udphd.check = csum((unsigned short*)&buffer, sizeof(psh) + sizeof(udphd));
             memset(buffer, 0, sizeof (buffer));
             sendto(rawSock , &udphd, sizeof(udphd), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
 
         }
-        // Port
+        // Easy Port
         else if(std::regex_match(message.c_str(), cm, std::regex("^This is the port:(\\d+)"))) {
             easyPort = cm[1].str();
-
         }
-        // Evil
+        // Evil port
         else if(std::regex_match(message.c_str(), std::regex("^I only.*"))) {
-            udphd.dest = htons(somePort);
+            udphd.dest = htons(notMyPort);
             memcpy(evilBuffer, buffer, sizeof(buffer));
-            // Swap source and destination address
+            // Swap source and destination addresses
             memcpy(evilBuffer+16, buffer+12, 4UL);
             memcpy(evilBuffer+12, buffer+16, 4UL);
             // Add our UDP header
@@ -261,33 +279,39 @@ int main(int argc, char const *argv[]) {
             evilBuffer[6] |= 0x80;
             sendto(rawIpSock , &evilBuffer, 112, 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr));
         }
-        // Oracle
+        // Oracle port
         else if(std::regex_match(message.c_str(), std::regex("^I am the oracle.*\\n"))) {
-            oraclePort = somePort;
+            oraclePort = notMyPort;
         }
+        // answer from the correct checksum
         else if(std::regex_match(message.c_str(), cm, std::regex("Good.*\\n\"(.*)\""))) {
             secretQuote = cm[1].str();
             // cout << secretQuote << endl;
         }
+        //answer from fellow evil villain
         else if(std::regex_match(message.c_str(), cm, std::regex("Hello.*\\n(\\d+)"))) {
             evilPort = cm[1].str();
         }
-
         memset(buffer, 0, sizeof(buffer));
     }  
+    //print all active ports
+    for(auto s: openPorts){
+        cout << "Port " << s << " is active." << endl;
+    }
     if(secretQuote == "" || easyPort == "" || evilPort == ""){
         cout << "Something went wrong try again" << endl;
         return -1;
     }
 
     serv_addr.sin_port = htons(oraclePort);
-    cout << "easy port " << easyPort <<  "\nevil port " << evilPort << "\nsecret message " << secretQuote << endl;
     string phrase = easyPort + (string)", " + evilPort;
+    cout << "Sending the answer to oracle" << endl;
     if(sendto(dgramSock , phrase.c_str(), phrase.size(), 0, (struct sockaddr *)&serv_addr, (socklen_t)sizeof(serv_addr)) < 0){
         cout << "send failed" << endl;
         return -1;
     }
     int read;
+    cout << "The sequence from the oracle is ";
     while((read = recvfrom(rawSock, buffer, sizeof(buffer), 0, (struct sockaddr *)&serv_addr, &addr_len)) > 0) {
         
         //message received not from the adress in the agrument
@@ -300,10 +324,6 @@ int main(int argc, char const *argv[]) {
         std::regex re("(\\d{3}\\d+)");
         std::sregex_iterator next(message.begin(), message.end(), re);
         std::sregex_iterator end;
-        // for(int i = 0; i < 100; i++)
-        // {
-        //     cout << buffer[i] << " ";
-        // }
         cout << message << endl;
         while(next != end) {
             if(port) {
