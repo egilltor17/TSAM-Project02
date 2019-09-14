@@ -6,7 +6,7 @@ Run `make` or
 in a terminal in the root directory of the assignment.
 
 ### Running the scanner
-Run `./bin/scanner <ip host> <low ip port number> <hight ip port number>`  \
+Run `sudo ./bin/scanner <ip host> <low ip port number> <hight ip port number>`  \
 to start the scanner with your desired port interval.
 
 Or `make run` to run the scanner on skel.ru.is 4000 4100
