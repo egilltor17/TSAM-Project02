@@ -1,4 +1,0 @@
-4010/udp open  samsung-unidex
-4020/udp open  trap
-4030/udp open  jdmn-port
-4042/udp open  ldxp
